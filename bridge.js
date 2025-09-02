@@ -2,9 +2,9 @@ const { WebcastPushConnection } = require("tiktok-live-connector");
 const WebSocket = require("ws");
 const readline = require("readline");
 
-const WS_PORT = 8080;
+const WS_PORT = process.env.PORT || 8080; // allow cloud platforms like Render
 let wss = new WebSocket.Server({ port: WS_PORT });
-console.log(`WebSocket server listening on ws://127.0.0.1:${WS_PORT}`);
+console.log(`WebSocket server listening on ws://0.0.0.0:${WS_PORT}`);
 
 let currentWebcast = null;
 
@@ -19,20 +19,20 @@ const giftNameMap = {
   5660: "Hand Hearts",
   8913: "Rosa",
   6064: "GG"
-  
 };
 
-function normalizeGiftName(rawName) {
-  if (rawName === undefined || rawName === null) return null;
-  const strName = String(rawName).trim();
-  if (!strName) return null;
+function normalizeGiftName(rawNameOrId) {
+  if (rawNameOrId === undefined || rawNameOrId === null) return null;
+  const strName = String(rawNameOrId).trim();
 
-  // Lookup by ID or lowercase name
+  // Try direct ID lookup
   if (giftNameMap[strName]) return giftNameMap[strName];
-  const key = strName.toLowerCase();
-  if (giftNameMap[key]) return giftNameMap[key];
 
-  // Fallback: capitalize first letter
+  // If numeric, try parseInt lookup
+  const asNumber = parseInt(strName, 10);
+  if (!isNaN(asNumber) && giftNameMap[asNumber]) return giftNameMap[asNumber];
+
+  // Fallback to raw
   return strName.charAt(0).toUpperCase() + strName.slice(1);
 }
 
@@ -55,8 +55,8 @@ async function startWatching(username) {
 
   connection.on("gift", (data) => {
     try {
-      let rawGiftName = data?.gift?.name || data?.gift_name || data?.data?.gift_name || data?.giftId;
-      let repeatCount = data?.repeat_count || data?.repeatCount || data?.repeat || 1;
+      let rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id;
+      let repeatCount = data?.repeat_count || data?.repeatCount || 1;
       const gift = normalizeGiftName(rawGiftName);
       if (!gift) return;
 
