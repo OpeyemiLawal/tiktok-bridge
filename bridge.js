@@ -53,19 +53,37 @@ async function startWatching(username) {
   console.log(`Starting to watch TikTok live of ${username}`);
   const connection = new WebcastPushConnection(username);
 
+  // Gift event
   connection.on("gift", (data) => {
     try {
+      if (!data) return;
+
       let rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id;
       let repeatCount = data?.repeat_count || data?.repeatCount || 1;
       const gift = normalizeGiftName(rawGiftName);
-      if (!gift) return;
+      if (!gift) {
+        console.warn("Gift event with missing gift info:", data);
+        return;
+      }
 
       const from = data?.uniqueId || data?.user?.uniqueId || "unknown";
-      console.log(`Gift event type ${gift} count ${repeatCount} from ${from}`);
+      console.log(`Gift: ${gift} x${repeatCount} from ${from}`);
 
       broadcast({ type: "gift", gift, count: Number(repeatCount) || 1, from });
     } catch (err) {
-      console.warn("Error handling gift:", err);
+      console.warn("Error handling gift:", err, "raw data:", data);
+    }
+  });
+
+  // Chat event
+  connection.on("chat", (data) => {
+    try {
+      if (!data || !data.comment) return;
+      const from = data?.uniqueId || "unknown";
+      console.log(`Chat: ${from} says "${data.comment}"`);
+      broadcast({ type: "chat", from, text: data.comment });
+    } catch (err) {
+      console.warn("Error handling chat:", err, "raw data:", data);
     }
   });
 
