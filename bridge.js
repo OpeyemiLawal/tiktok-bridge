@@ -46,7 +46,7 @@ function broadcast(obj) {
 async function startWatching(username) {
   if (!username) return;
   if (currentWebcast) {
-    try { currentWebcast.disconnect(); } catch (e) {}
+    try { await currentWebcast.disconnect(); } catch (e) {}
     currentWebcast = null;
   }
 
@@ -58,34 +58,33 @@ async function startWatching(username) {
     try {
       if (!data) return;
 
-      let rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id;
-      let repeatCount = data?.repeat_count || data?.repeatCount || 1;
+      // Extract gift info safely
+      const rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id;
+      const repeatCount = data?.repeat_count || data?.repeatCount || 1;
       const gift = normalizeGiftName(rawGiftName);
       if (!gift) {
-        console.warn("Gift event with missing gift info:", data);
+        console.warn("Gift event with missing gift info, skipping");
         return;
       }
 
       const from = data?.uniqueId || data?.user?.uniqueId || "unknown";
+
+      // Log gifts only
       console.log(`Gift: ${gift} x${repeatCount} from ${from}`);
 
-      broadcast({ type: "gift", gift, count: Number(repeatCount) || 1, from });
+      // Broadcast only gifts to clients
+      broadcast({
+        type: "gift",
+        gift,
+        count: Number(repeatCount) || 1,
+        from
+      });
     } catch (err) {
-      console.warn("Error handling gift:", err, "raw data:", data);
+      console.warn("Error handling gift:", err?.toString?.() || err);
     }
   });
 
-  // Chat event
-  connection.on("chat", (data) => {
-    try {
-      if (!data || !data.comment) return;
-      const from = data?.uniqueId || "unknown";
-      console.log(`Chat: ${from} says "${data.comment}"`);
-      broadcast({ type: "chat", from, text: data.comment });
-    } catch (err) {
-      console.warn("Error handling chat:", err, "raw data:", data);
-    }
-  });
+  // No chat listener at all
 
   connection.on("connected", (state) => {
     console.log("Connected to TikTok room", state.roomId);
@@ -97,7 +96,10 @@ async function startWatching(username) {
 
   connection.on("error", (err) => {
     console.warn("TikTok connection error", err?.toString?.() || err);
-    broadcast({ type: "error", message: "Failed to connect to TikTok live for " + username });
+    broadcast({
+      type: "error",
+      message: "Failed to connect to TikTok live for " + username
+    });
   });
 
   try {
@@ -105,7 +107,10 @@ async function startWatching(username) {
     currentWebcast = connection;
   } catch (err) {
     console.error("Failed to connect to TikTok live", err?.toString?.() || err);
-    broadcast({ type: "error", message: "Failed to connect to TikTok live for " + username });
+    broadcast({
+      type: "error",
+      message: "Failed to connect to TikTok live for " + username
+    });
   }
 }
 
@@ -137,6 +142,7 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 console.log("Type commands here for testing:");
 console.log('gift Lion 2  // sends a Lion gift count 2 to Godot clients');
 console.log('watch username  // asks bridge to start watching that username');
+
 rl.on("line", (line) => {
   const parts = line.trim().split(/\s+/);
   if (!parts[0]) return;
@@ -148,7 +154,7 @@ rl.on("line", (line) => {
     console.log(`Simulated gift ${gift} x${count}`);
   } else if (cmd === "watch") {
     const username = parts[1];
-    if (!username) return console.log("Usage watch username");
+    if (!username) return console.log("Usage: watch username");
     startWatching(username);
   } else {
     console.log("Unknown command", line);
