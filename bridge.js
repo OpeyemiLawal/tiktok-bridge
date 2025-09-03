@@ -123,8 +123,15 @@ function broadcast(obj) {
 
 async function startWatching(username) {
   if (!username) return;
+  
+  // Disconnect from any existing live stream
   if (currentWebcast) {
-    try { currentWebcast.disconnect(); } catch (e) {}
+    try { 
+      console.log("Disconnecting from previous TikTok live stream");
+      currentWebcast.disconnect(); 
+    } catch (e) {
+      console.warn("Error disconnecting from previous stream:", e);
+    }
     currentWebcast = null;
   }
 
@@ -264,7 +271,7 @@ async function startWatching(username) {
 
 // WebSocket server
 wss.on("connection", (ws) => {
-  console.log("Godot client connected via WebSocket");
+  console.log(`Godot client connected via WebSocket (Total clients: ${wss.clients.size})`);
 
   ws.on("message", (msg) => {
     let parsed = null;
@@ -276,13 +283,37 @@ wss.on("connection", (ws) => {
     } else if (parsed.cmd === "test" && parsed.gift) {
       const safeGift = normalizeGiftName(parsed.gift) || "UnknownGift";
       broadcast({ type: "gift", gift: safeGift, count: parsed.count || 1, from: "test" });
+    } else if (parsed.cmd === "status") {
+      // Return current status
+      const status = {
+        type: "status",
+        connected: currentWebcast !== null,
+        watching: currentWebcast ? "TikTok live stream" : "No stream",
+        clients: wss.clients.size
+      };
+      ws.send(JSON.stringify(status));
     } else {
       ws.send(JSON.stringify({ type: "error", message: "Unknown command" }));
     }
   });
 
   ws.on("close", () => {
-    console.log("Godot client disconnected");
+    console.log(`Godot client disconnected (Remaining clients: ${wss.clients.size - 1})`);
+    
+    // Only disconnect from TikTok live if no clients remain
+    if (wss.clients.size === 0 && currentWebcast) {
+      try {
+        console.log("All clients disconnected - disconnecting from TikTok live");
+        currentWebcast.disconnect();
+        currentWebcast = null;
+        console.log("TikTok live disconnected, awaiting new client connection");
+      } catch (err) {
+        console.warn("Error disconnecting from TikTok live:", err);
+        currentWebcast = null;
+      }
+    } else if (wss.clients.size > 0) {
+      console.log("Other clients still connected, keeping TikTok live active");
+    }
   });
 });
 
@@ -308,3 +339,17 @@ rl.on("line", (line) => {
     console.log("Unknown command", line);
   }
 });
+
+// Periodic status logging
+setInterval(() => {
+  const clientCount = wss.clients.size;
+  const isWatching = currentWebcast !== null;
+  
+  if (clientCount === 0) {
+    console.log("Status: No clients connected, awaiting connection...");
+  } else if (clientCount === 1) {
+    console.log(`Status: ${clientCount} client connected, TikTok live: ${isWatching ? 'Active' : 'Inactive'}`);
+  } else {
+    console.log(`Status: ${clientCount} clients connected, TikTok live: ${isWatching ? 'Active' : 'Inactive'}`);
+  }
+}, 30000); // Log status every 30 seconds
