@@ -9,15 +9,54 @@ try {
     const originalSimplifyObject = dataConverter.simplifyObject;
     dataConverter.simplifyObject = function(type, originalObject) {
       try {
-        // For gift messages, safely handle giftDetails before processing
-        if (type === 'WebcastGiftMessage' && originalObject && originalObject.giftDetails) {
-          // Create a safe copy and ensure giftImage exists
-          const safeObject = { ...originalObject };
-          if (safeObject.giftDetails && !safeObject.giftDetails.giftImage) {
-            safeObject.giftDetails.giftImage = {};
+        // For gift messages, completely replace the problematic logic
+        if (type === 'WebcastGiftMessage') {
+          const webcastObject = { ...originalObject };
+          
+          // Safe gift object creation
+          webcastObject.repeatEnd = !!webcastObject.repeatEnd;
+          webcastObject.gift = {
+            gift_id: webcastObject.giftId,
+            repeat_count: webcastObject.repeatCount,
+            repeat_end: webcastObject.repeatEnd ? 1 : 0,
+            gift_type: webcastObject.giftDetails?.giftType
+          };
+
+          // Safely merge giftDetails without accessing giftImage
+          if (webcastObject.giftDetails) {
+            // Copy all properties except giftImage to avoid the crash
+            const safeGiftDetails = { ...webcastObject.giftDetails };
+            delete safeGiftDetails.giftImage;
+            
+            // Merge the safe giftDetails
+            Object.assign(webcastObject, safeGiftDetails);
+            delete webcastObject.giftDetails;
           }
-          return originalSimplifyObject.call(this, type, safeObject);
+
+          // Handle giftExtra safely
+          if (webcastObject.giftExtra) {
+            if (webcastObject.giftExtra.toUserId) {
+              webcastObject.receiverUserId = webcastObject.giftExtra.toUserId;
+              delete webcastObject.giftExtra.toUserId;
+            }
+            if (webcastObject.giftExtra.sendGiftSendMessageSuccessMs) {
+              webcastObject.timestamp = parseInt(webcastObject.giftExtra.sendGiftSendMessageSuccessMs);
+              delete webcastObject.giftExtra.sendGiftSendMessageSuccessMs;
+            }
+            Object.assign(webcastObject, webcastObject.giftExtra);
+            delete webcastObject.giftExtra;
+          }
+
+          // Handle monitorExtra safely
+          if (webcastObject.monitorExtra?.startsWith('{')) {
+            try {
+              webcastObject.monitorExtra = JSON.parse(webcastObject.monitorExtra);
+            } catch (err) {}
+          }
+
+          return webcastObject;
         }
+        
         // For all other types, use original function
         return originalSimplifyObject.call(this, type, originalObject);
       } catch (err) {
@@ -93,8 +132,13 @@ async function startWatching(username) {
   const connection = new WebcastPushConnection(username);
 
   // Enhanced gift event handling with multiple fallback strategies
+  // Note: This event might be problematic due to TikTok library issues
+  // We'll use rawData handler as primary method
   connection.on("gift", (data) => {
     try {
+      // Log the raw data for debugging (first 200 chars)
+      console.log("Gift event received (processed):", JSON.stringify(data).substring(0, 200));
+      
       // Multiple fallback strategies for gift data extraction
       let rawGiftName = null;
       let repeatCount = 1;
@@ -111,6 +155,10 @@ async function startWatching(username) {
         rawGiftName = data.giftDetails.giftName;
       } else if (data?.giftDetails?.giftId) {
         rawGiftName = data.giftDetails.giftId;
+      } else if (data?.gift_id) {
+        rawGiftName = data.gift_id;
+      } else if (data?.gift_type) {
+        rawGiftName = data.gift_type;
       } else {
         rawGiftName = "UnknownGift";
       }
@@ -131,6 +179,8 @@ async function startWatching(username) {
         from = data.user.uniqueId;
       } else if (data?.sender?.uniqueId) {
         from = data.sender.uniqueId;
+      } else if (data?.userId) {
+        from = data.userId;
       }
 
       // Validate and normalize data
@@ -151,6 +201,36 @@ async function startWatching(username) {
         type: "error",
         message: "Error while processing a gift event"
       });
+    }
+  });
+  
+  // Add a raw message handler to catch gifts before they go through the problematic processing
+  connection.on("rawData", (rawData) => {
+    try {
+      // Look for gift-related data in raw messages
+      if (rawData && typeof rawData === 'object') {
+        // Check if this looks like a gift message
+        if (rawData.giftId || rawData.giftDetails || rawData.gift) {
+          console.log("Raw gift data detected, processing directly:", JSON.stringify(rawData).substring(0, 200));
+          
+          // Extract gift information directly from raw data
+          let giftName = rawData.giftId || rawData.gift?.id || "UnknownGift";
+          let count = rawData.repeatCount || rawData.repeat_count || 1;
+          let sender = rawData.userId || rawData.user?.uniqueId || "unknown";
+          
+          const gift = normalizeGiftName(giftName);
+          console.log(`Direct gift processing → ${gift} x${count} from ${sender}`);
+          
+          broadcast({
+            type: "gift",
+            gift,
+            count: Number(count) || 1,
+            from: sender
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Error in raw data handler:", err);
     }
   });
 
@@ -174,6 +254,12 @@ async function startWatching(username) {
     console.error("Failed to connect to TikTok live", err?.toString?.() || err);
     broadcast({ type: "error", message: "Failed to connect to TikTok live for " + username });
   }
+  
+  // Add a global error handler for the connection to catch any unhandled errors
+  connection.on("error", (err) => {
+    console.warn("TikTok connection error (global):", err?.toString?.() || err);
+    // Don't broadcast this to avoid spam, just log it
+  });
 }
 
 // WebSocket server
