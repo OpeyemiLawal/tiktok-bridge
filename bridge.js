@@ -32,7 +32,7 @@ function normalizeGiftName(rawNameOrId) {
   const asNumber = parseInt(strName, 10);
   if (!isNaN(asNumber) && giftNameMap[asNumber]) return giftNameMap[asNumber];
 
-  // Fallback to raw
+  // Fallback to raw with capitalization
   return strName.charAt(0).toUpperCase() + strName.slice(1);
 }
 
@@ -53,19 +53,29 @@ async function startWatching(username) {
   console.log(`Starting to watch TikTok live of ${username}`);
   const connection = new WebcastPushConnection(username);
 
+  // Gift event handling (fully crash-safe)
   connection.on("gift", (data) => {
     try {
-      let rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id;
-      let repeatCount = data?.repeat_count || data?.repeatCount || 1;
-      const gift = normalizeGiftName(rawGiftName);
-      if (!gift) return;
+      const rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id || "UnknownGift";
+      const gift = normalizeGiftName(rawGiftName) || "UnknownGift";
 
+      const repeatCount = Number(data?.repeat_count || data?.repeatCount || 1);
       const from = data?.uniqueId || data?.user?.uniqueId || "unknown";
-      console.log(`Gift event type ${gift} count ${repeatCount} from ${from}`);
 
-      broadcast({ type: "gift", gift, count: Number(repeatCount) || 1, from });
+      console.log(`Gift event → ${gift} x${repeatCount} from ${from}`);
+
+      broadcast({
+        type: "gift",
+        gift,
+        count: repeatCount,
+        from
+      });
     } catch (err) {
       console.warn("Error handling gift:", err);
+      broadcast({
+        type: "error",
+        message: "Error while processing a gift event"
+      });
     }
   });
 
@@ -103,7 +113,8 @@ wss.on("connection", (ws) => {
       startWatching(parsed.username);
       ws.send(JSON.stringify({ type: "info", message: "Watching " + parsed.username }));
     } else if (parsed.cmd === "test" && parsed.gift) {
-      broadcast({ type: "gift", gift: parsed.gift, count: parsed.count || 1, from: "test" });
+      const safeGift = normalizeGiftName(parsed.gift) || "UnknownGift";
+      broadcast({ type: "gift", gift: safeGift, count: parsed.count || 1, from: "test" });
     } else {
       ws.send(JSON.stringify({ type: "error", message: "Unknown command" }));
     }
@@ -124,7 +135,7 @@ rl.on("line", (line) => {
   if (!parts[0]) return;
   const cmd = parts[0].toLowerCase();
   if (cmd === "gift") {
-    const gift = parts[1] || "GG";
+    const gift = normalizeGiftName(parts[1]) || "UnknownGift";
     const count = Number(parts[2]) || 1;
     broadcast({ type: "gift", gift, count, from: "cli" });
     console.log(`Simulated gift ${gift} x${count}`);
