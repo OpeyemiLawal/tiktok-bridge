@@ -2,6 +2,45 @@ const { WebcastPushConnection } = require("tiktok-live-connector");
 const WebSocket = require("ws");
 const readline = require("readline");
 
+// Monkey patch to prevent giftDetails.giftImage crashes
+try {
+  const dataConverter = require("tiktok-live-connector/dist/lib/_legacy/data-converter");
+  if (dataConverter && dataConverter.simplifyObject) {
+    const originalSimplifyObject = dataConverter.simplifyObject;
+    dataConverter.simplifyObject = function(type, originalObject) {
+      try {
+        // For gift messages, safely handle giftDetails before processing
+        if (type === 'WebcastGiftMessage' && originalObject && originalObject.giftDetails) {
+          // Create a safe copy and ensure giftImage exists
+          const safeObject = { ...originalObject };
+          if (safeObject.giftDetails && !safeObject.giftDetails.giftImage) {
+            safeObject.giftDetails.giftImage = {};
+          }
+          return originalSimplifyObject.call(this, type, safeObject);
+        }
+        // For all other types, use original function
+        return originalSimplifyObject.call(this, type, originalObject);
+      } catch (err) {
+        console.warn("Error in simplified data converter, using safe fallback:", err);
+        // Return a safe fallback object for gifts
+        if (type === 'WebcastGiftMessage') {
+          return {
+            type: "gift",
+            gift: "UnknownGift",
+            count: 1,
+            from: "unknown"
+          };
+        }
+        // For other types, try to return original object
+        return originalObject;
+      }
+    };
+    console.log("Successfully patched TikTok data converter to prevent crashes");
+  }
+} catch (err) {
+  console.warn("Could not patch TikTok data converter:", err);
+}
+
 const WS_PORT = process.env.PORT || 8081; // allow cloud platforms like Render
 let wss = new WebSocket.Server({ port: WS_PORT });
 console.log(`WebSocket server listening on ws://0.0.0.0:${WS_PORT}`);
@@ -53,14 +92,50 @@ async function startWatching(username) {
   console.log(`Starting to watch TikTok live of ${username}`);
   const connection = new WebcastPushConnection(username);
 
-  // Gift event handling (fully crash-safe)
+  // Enhanced gift event handling with multiple fallback strategies
   connection.on("gift", (data) => {
     try {
-      const rawGiftName = data?.gift?.name || data?.giftId || data?.gift?.id || "UnknownGift";
-      const gift = normalizeGiftName(rawGiftName) || "UnknownGift";
+      // Multiple fallback strategies for gift data extraction
+      let rawGiftName = null;
+      let repeatCount = 1;
+      let from = "unknown";
 
-      const repeatCount = Number(data?.repeat_count || data?.repeatCount || 1);
-      const from = data?.uniqueId || data?.user?.uniqueId || "unknown";
+      // Strategy 1: Try to get gift name from various possible locations
+      if (data?.gift?.name) {
+        rawGiftName = data.gift.name;
+      } else if (data?.giftId) {
+        rawGiftName = data.giftId;
+      } else if (data?.gift?.id) {
+        rawGiftName = data.gift.id;
+      } else if (data?.giftDetails?.giftName) {
+        rawGiftName = data.giftDetails.giftName;
+      } else if (data?.giftDetails?.giftId) {
+        rawGiftName = data.giftDetails.giftId;
+      } else {
+        rawGiftName = "UnknownGift";
+      }
+
+      // Strategy 2: Try to get repeat count
+      if (data?.repeat_count !== undefined) {
+        repeatCount = Number(data.repeat_count);
+      } else if (data?.repeatCount !== undefined) {
+        repeatCount = Number(data.repeatCount);
+      } else if (data?.giftDetails?.repeatCount !== undefined) {
+        repeatCount = Number(data.giftDetails.repeatCount);
+      }
+
+      // Strategy 3: Try to get sender information
+      if (data?.uniqueId) {
+        from = data.uniqueId;
+      } else if (data?.user?.uniqueId) {
+        from = data.user.uniqueId;
+      } else if (data?.sender?.uniqueId) {
+        from = data.sender.uniqueId;
+      }
+
+      // Validate and normalize data
+      if (isNaN(repeatCount) || repeatCount < 1) repeatCount = 1;
+      const gift = normalizeGiftName(rawGiftName) || "UnknownGift";
 
       console.log(`Gift event → ${gift} x${repeatCount} from ${from}`);
 
