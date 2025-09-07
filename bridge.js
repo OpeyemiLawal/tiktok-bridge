@@ -353,3 +353,79 @@ setInterval(() => {
     console.log(`Status: ${clientCount} clients connected, TikTok live: ${isWatching ? 'Active' : 'Inactive'}`);
   }
 }, 30000); // Log status every 30 seconds
+
+// ... keep everything else you already have above ...
+
+async function startWatching(username) {
+  if (!username) return;
+
+  // Disconnect from existing
+  if (currentWebcast) {
+    try { currentWebcast.disconnect(); } catch (e) {}
+    currentWebcast = null;
+  }
+
+  console.log(`Starting to watch TikTok live of ${username}`);
+  const connection = new WebcastPushConnection(username);
+
+  // Auto reconnect handler
+  function scheduleReconnect() {
+    console.log("Scheduling reconnect in 5s...");
+    setTimeout(() => {
+      startWatching(username);
+    }, 5000);
+  }
+
+  connection.on("connected", (state) => {
+    console.log("Connected to TikTok room", state.roomId);
+
+    // Start keep-alive ping
+    if (!connection._pingInterval) {
+      connection._pingInterval = setInterval(() => {
+        try {
+          if (connection.ws && connection.ws.readyState === 1) {
+            connection.ws.ping(); // low-level ping
+            console.log("Sent ping to TikTok");
+          }
+        } catch (err) {
+          console.warn("Ping error:", err);
+        }
+      }, 20000); // every 20s
+    }
+  });
+
+  connection.on("disconnected", (reason) => {
+    console.log("TikTok disconnected:", reason);
+    clearInterval(connection._pingInterval);
+    connection._pingInterval = null;
+    scheduleReconnect();
+  });
+
+  connection.on("error", (err) => {
+    console.warn("TikTok connection error", err?.toString?.() || err);
+    clearInterval(connection._pingInterval);
+    connection._pingInterval = null;
+    scheduleReconnect();
+  });
+
+  try {
+    await connection.connect();
+    currentWebcast = connection;
+  } catch (err) {
+    console.error("Failed to connect to TikTok live", err?.toString?.() || err);
+    scheduleReconnect();
+  }
+}
+
+// --- Ping Godot clients too ---
+setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.ping();
+      } catch (err) {
+        console.warn("Failed to ping client:", err);
+      }
+    }
+  });
+}, 20000);
