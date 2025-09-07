@@ -353,4 +353,3 @@ setInterval(() => {
     console.log(`Status: ${clientCount} clients connected, TikTok live: ${isWatching ? 'Active' : 'Inactive'}`);
   }
 }, 30000); // Log status every 30 seconds
-
