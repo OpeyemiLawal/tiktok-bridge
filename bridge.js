@@ -283,6 +283,10 @@ wss.on("connection", (ws) => {
     } else if (parsed.cmd === "test" && parsed.gift) {
       const safeGift = normalizeGiftName(parsed.gift) || "UnknownGift";
       broadcast({ type: "gift", gift: safeGift, count: parsed.count || 1, from: "test" });
+    } else if (parsed.cmd === "ping") {
+      // Respond to ping with pong
+      ws.send(JSON.stringify({ type: "pong" }));
+      console.log("Bridge: responded to ping with pong");
     } else if (parsed.cmd === "status") {
       // Return current status
       const status = {
@@ -297,8 +301,9 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
     console.log(`Godot client disconnected (Remaining clients: ${wss.clients.size - 1})`);
+    console.log(`Close code: ${code}, reason: ${reason}`);
     
     // Only disconnect from TikTok live if no clients remain
     if (wss.clients.size === 0 && currentWebcast) {
@@ -314,6 +319,10 @@ wss.on("connection", (ws) => {
     } else if (wss.clients.size > 0) {
       console.log("Other clients still connected, keeping TikTok live active");
     }
+  });
+
+  ws.on("error", (error) => {
+    console.log(`WebSocket error for client: ${error.message}`);
   });
 });
 
@@ -353,3 +362,42 @@ setInterval(() => {
     console.log(`Status: ${clientCount} clients connected, TikTok live: ${isWatching ? 'Active' : 'Inactive'}`);
   }
 }, 30000); // Log status every 30 seconds
+
+// Graceful shutdown handling
+function gracefulShutdown() {
+  console.log("Bridge shutting down gracefully...");
+  
+  // Notify all connected clients that the bridge is shutting down
+  broadcast({ 
+    type: "bridge_shutdown", 
+    message: "Bridge is shutting down. Please reconnect." 
+  });
+  
+  // Close all WebSocket connections
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.close(1000, "Bridge shutting down");
+    }
+  });
+  
+  // Disconnect from TikTok live
+  if (currentWebcast) {
+    try {
+      currentWebcast.disconnect();
+      currentWebcast = null;
+    } catch (err) {
+      console.warn("Error disconnecting from TikTok live during shutdown:", err);
+    }
+  }
+  
+  // Close the WebSocket server
+  wss.close(() => {
+    console.log("WebSocket server closed");
+    process.exit(0);
+  });
+}
+
+// Handle process termination signals
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGHUP', gracefulShutdown);
