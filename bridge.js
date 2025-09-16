@@ -1,7 +1,7 @@
 // bridge.js
 // Local TikTok LIVE -> WebSocket bridge for Godot
 
-const { WebcastPushConnection } = require("tiktok-live-connector");
+const { TikTokLiveConnection } = require("tiktok-live-connector");
 const WebSocket = require("ws");
 const http = require("http");
 const readline = require("readline");
@@ -77,7 +77,7 @@ async function startWatching(username) {
   }
 
   console.log(`Starting to watch TikTok live of ${username}`);
-  const connection = new WebcastPushConnection(username);
+  const connection = new TikTokLiveConnection(username);
 
   // Gifts
   connection.on("gift", (data) => {
@@ -230,8 +230,23 @@ rl.on("line", (line) => {
 });
 
 // Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("Shutting down...");
-  try { if (currentWebcast) await currentWebcast.disconnect(); } catch (_) {}
-  wss.close(() => process.exit(0));
-});
+async function gracefulShutdown(signal) {
+  console.log(`Shutting down due to ${signal}...`);
+  try {
+    // Inform clients the bridge is going down
+    broadcast({ type: "bridge_shutdown", message: `Bridge shutting down (${signal})` });
+  } catch (_) {}
+  try {
+    if (currentWebcast) await currentWebcast.disconnect();
+  } catch (err) {
+    console.warn("Error disconnecting TikTok on shutdown:", err);
+  }
+  try {
+    wss.close(() => process.exit(0));
+  } catch (_) {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
