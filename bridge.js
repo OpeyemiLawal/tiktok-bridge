@@ -229,6 +229,9 @@ wss.on("connection", (ws) => {
     } else if (parsed.cmd === "test" && parsed.gift) {
       const safeGift = normalizeGiftName(parsed.gift) || "UnknownGift";
       broadcast({ type: "gift", gift: safeGift, count: parsed.count || 1, from: "test" });
+    } else if (parsed.cmd === "test_comment" && parsed.text) {
+      const text = String(parsed.text);
+      broadcast({ type: "comment", text, from: parsed.from || "test" });
     } else if (parsed.cmd === "ping") {
       ws.send(JSON.stringify({ type: "pong" }));
       console.log("Bridge: responded to ping with pong");
@@ -268,6 +271,7 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 console.log("Type commands here for testing:");
 console.log('gift Lion 2  // sends a Lion gift count 2 to Godot clients');
 console.log('watch username  // asks bridge to start watching that username');
+console.log('comment 3  // sends a chat comment "3" to Godot clients');
 rl.on("line", (line) => {
   const parts = line.trim().split(/\s+/);
   if (!parts[0]) return;
@@ -281,6 +285,10 @@ rl.on("line", (line) => {
     const username = parts[1];
     if (!username) return console.log("Usage watch username");
     startWatching(username);
+  } else if (cmd === "comment") {
+    const text = parts.slice(1).join(" ") || "1";
+    broadcast({ type: "comment", text, from: "cli" });
+    console.log(`Simulated comment "${text}"`);
   } else {
     console.log("Unknown command", line);
   }
