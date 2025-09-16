@@ -4,7 +4,6 @@
 const { TikTokLiveConnection } = require("tiktok-live-connector");
 const WebSocket = require("ws");
 const http = require("http");
-const readline = require("readline");
 
 const WS_PORT = process.env.PORT || 8080; // You can override via env
 const HOST = process.env.HOST || "0.0.0.0"; // Bind host (use 127.0.0.1 for local-only)
@@ -199,35 +198,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-// CLI simulation
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-console.log("Type commands here for testing:");
-console.log('gift Lion 2      // sends a Lion gift x2 to Godot clients');
-console.log('comment 3        // sends a chat comment \"3\" to Godot clients');
-console.log('watch username   // asks bridge to start watching that username');
-
-rl.on("line", (line) => {
-  const parts = line.trim().split(/\s+/);
-  if (!parts[0]) return;
-  const cmd = parts[0].toLowerCase();
-
-  if (cmd === "gift") {
-    const gift = parts[1] || "GG";
-    const count = Number(parts[2]) || 1;
-    broadcast({ type: "gift", gift, count, from: "cli" });
-    console.log(`Simulated gift ${gift} x${count}`);
-  } else if (cmd === "comment") {
-    const text = parts.slice(1).join(" ") || "1";
-    broadcast({ type: "comment", text, from: "cli" });
-    console.log(`Simulated comment "${text}"`);
-  } else if (cmd === "watch") {
-    const username = parts[1];
-    if (!username) return console.log("Usage: watch <username>");
-    startWatching(username);
-  } else {
-    console.log("Unknown command:", line);
-  }
-});
+// CLI simulation removed for deployment-only usage. Use WebSocket messages from clients instead.
 
 // Graceful shutdown
 async function gracefulShutdown(signal) {
