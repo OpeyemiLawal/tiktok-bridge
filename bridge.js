@@ -28,6 +28,7 @@ healthServer.listen(HEALTH_PORT, HOST, () => {
 let currentWebcast = null;
 let currentUsername = null; // Username currently being watched (if any)
 const clients = new Set();  // Track connected Godot clients
+let watchOwner = null; // The WebSocket that requested the current watch (if any)
 
 // TikTok gift ID to human-readable name mapping
 const giftNameMap = {
@@ -119,6 +120,7 @@ async function startWatching(username) {
     broadcast({ type: "info", message: "Disconnected from TikTok" });
     currentWebcast = null;
     currentUsername = null;
+    watchOwner = null;
   });
 
   connection.on("error", (err) => {
@@ -158,6 +160,8 @@ wss.on("connection", (ws) => {
         ws.send(JSON.stringify({ type: "info", message: "Already watching " + parsed.username }));
       } else {
         startWatching(parsed.username);
+        // Track which client initiated this watch so we can auto-disconnect
+        watchOwner = ws;
         ws.send(JSON.stringify({ type: "info", message: "Watching " + parsed.username }));
       }
     } else if (parsed.cmd === "ping") {
@@ -179,6 +183,25 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     console.log("Godot client disconnected");
     clients.delete(ws);
+    // If the disconnecting client initiated the current watch, stop TikTok immediately
+    if (watchOwner === ws) {
+      (async () => {
+        if (currentWebcast) {
+          try {
+            await currentWebcast.disconnect();
+            console.log("Disconnected from TikTok because watch owner disconnected");
+          } catch (err) {
+            console.warn("Error disconnecting TikTok on watch owner close:", err);
+          } finally {
+            currentWebcast = null;
+            currentUsername = null;
+            watchOwner = null;
+          }
+        } else {
+          watchOwner = null;
+        }
+      })();
+    }
     // Only disconnect TikTok if there are no more connected Godot clients
     if (clients.size === 0) {
       (async () => {
@@ -191,6 +214,7 @@ wss.on("connection", (ws) => {
           } finally {
             currentWebcast = null;
             currentUsername = null;
+            watchOwner = null;
           }
         }
       })();
